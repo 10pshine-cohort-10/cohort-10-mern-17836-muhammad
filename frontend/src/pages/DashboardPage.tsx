@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, Plus, FileText } from 'lucide-react';
@@ -107,6 +108,9 @@ export default function DashboardPage(): React.ReactElement {
     }
   }, [searchQuery, selectedTag, dateFilter, activeNav]);
 
+  const loadNotesRef = useRef<() => Promise<void>>(loadNotes);
+  loadNotesRef.current = loadNotes;
+
   useEffect(() => {
     void loadNotes();
   }, [loadNotes]);
@@ -133,7 +137,7 @@ export default function DashboardPage(): React.ReactElement {
       if (!matches) {
         setNotes((prev) => prev.filter((n) => n.id !== updatedNote.id));
         if (activeNav === 'recent') {
-          void loadNotes();
+          void loadNotesRef.current();
         }
         return;
       }
@@ -141,7 +145,7 @@ export default function DashboardPage(): React.ReactElement {
       setNotes((prev) => {
         const exists = prev.some((n) => n.id === updatedNote.id);
         if (!exists) {
-          void loadNotes();
+          void loadNotesRef.current();
           return prev;
         }
         const ordered = sortByUpdatedDesc(
@@ -154,26 +158,27 @@ export default function DashboardPage(): React.ReactElement {
     socket.on('note:deleted', ({ id }: { id: string }) => {
       setNotes((prev) => prev.filter((n) => n.id !== id));
       if (activeNav === 'recent') {
-        void loadNotes();
+        void loadNotesRef.current();
       }
     });
 
     socket.on('notes:imported', () => {
-      void loadNotes();
+      void loadNotesRef.current();
     });
 
     return () => {
       socket.disconnect();
     };
-  }, [token, loadNotes, selectedTag, searchQuery, dateFilter, activeNav]);
+  }, [token, selectedTag, searchQuery, dateFilter, activeNav]);
 
   const handleDeleteNote = async (noteId: string): Promise<void> => {
+    const startedInRecent = activeNav === 'recent';
     try {
       await deleteNote(noteId);
       if (!isMountedRef.current) return;
       setNotes((prev) => prev.filter((n) => n.id !== noteId));
-      if (activeNav === 'recent') {
-        void loadNotes();
+      if (startedInRecent) {
+        void loadNotesRef.current();
       }
     } catch (err) {
       if (!isMountedRef.current) return;
@@ -185,7 +190,7 @@ export default function DashboardPage(): React.ReactElement {
   const handleImportNotes = async (parsedNotes: NotePayload[]): Promise<void> => {
     await importNotesBulk(parsedNotes);
     if (!isMountedRef.current) return;
-    await loadNotes();
+    await loadNotesRef.current();
   };
 
   const handleLogout = async (): Promise<void> => {

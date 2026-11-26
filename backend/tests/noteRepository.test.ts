@@ -8,7 +8,7 @@ describe('NoteRepository (Data Access Layer)', () => {
   it('executes parameterized SQL query scoped by user_id, tag, and search', async () => {
     const executeStub = sinon.stub().resolves([[{ id: 'n1', title: 'Weekly planning' }]]);
     const dbStub: NoteDatabasePool = {
-      execute: executeStub as NoteDatabasePool['execute'],
+      execute: executeStub,
     };
     const repo = new NoteRepository(dbStub);
 
@@ -16,7 +16,10 @@ describe('NoteRepository (Data Access Layer)', () => {
 
     expect(rows).to.have.lengthOf(1);
     const [sql, params] = executeStub.firstCall.args as [string, string[]];
-    expect(sql).to.include('WHERE user_id = ? AND tag = ? AND (title LIKE ? OR content LIKE ?)');
+
+    expect(sql).to.include(
+      'WHERE user_id = ? AND tag = ? AND (title LIKE ? OR content LIKE ?)',
+    );
     expect(params).to.deep.equal(['user-1', 'Work', '%Weekly%', '%Weekly%']);
   });
 
@@ -38,16 +41,22 @@ describe('NoteRepository (Data Access Layer)', () => {
       .resolves([[updatedRow]]);
 
     const dbStub: NoteDatabasePool = {
-      execute: executeStub as NoteDatabasePool['execute'],
+      execute: executeStub,
     };
 
     const repo = new NoteRepository(dbStub);
 
-    const row = await repo.updateNote('n1', 'user-1', { title: 'Updated title' });
+    const row = await repo.updateNote('n1', 'user-1', {
+      title: 'Updated title',
+    });
 
     expect(row).to.deep.equal(updatedRow);
 
-    const [updateSql, updateParams] = executeStub.firstCall.args as [string, string[]];
+    const [updateSql, updateParams] = executeStub.firstCall.args as [
+      string,
+      string[],
+    ];
+
     expect(updateSql).to.include('SET title = ?');
     expect(updateSql).to.not.include('content = ?');
     expect(updateSql).to.not.include('tag = ?');
@@ -56,62 +65,68 @@ describe('NoteRepository (Data Access Layer)', () => {
   });
 
   it('reads imported notes on the transaction connection before committing', async () => {
-    const fetchedRows = [
-      {
-        id: 'n1',
-        user_id: 'user-1',
-        title: 'Imported note',
-      },
-    ];
+    try {
+      const fetchedRows = [
+        {
+          id: 'n1',
+          user_id: 'user-1',
+          title: 'Imported note',
+        },
+      ];
 
-    const connExecuteStub = sinon
-      .stub()
-      .onFirstCall()
-      .resolves([{ affectedRows: 1 }])
-      .onSecondCall()
-      .resolves([fetchedRows]);
+      const connExecuteStub = sinon
+        .stub()
+        .onFirstCall()
+        .resolves([{ affectedRows: 1 }])
+        .onSecondCall()
+        .resolves([fetchedRows]);
 
-    const beginTransactionStub = sinon.stub().resolves();
-    const commitStub = sinon.stub().resolves();
-    const rollbackStub = sinon.stub().resolves();
-    const releaseStub = sinon.stub();
+      const beginTransactionStub = sinon.stub().resolves();
+      const commitStub = sinon.stub().resolves();
+      const rollbackStub = sinon.stub().resolves();
+      const releaseStub = sinon.stub();
 
-    const connectionStub = {
-      execute: connExecuteStub,
-      beginTransaction: beginTransactionStub,
-      commit: commitStub,
-      rollback: rollbackStub,
-      release: releaseStub,
-    } as unknown as PoolConnection;
+      const connectionStub = {
+        execute: connExecuteStub,
+        beginTransaction: beginTransactionStub,
+        commit: commitStub,
+        rollback: rollbackStub,
+        release: releaseStub,
+      } as unknown as PoolConnection;
 
-    const poolExecuteStub = sinon.stub();
+      const poolExecuteStub = sinon.stub();
 
-    const dbStub: NoteDatabasePool = {
-      execute: poolExecuteStub as NoteDatabasePool['execute'],
-      getConnection: sinon.stub().resolves(connectionStub),
-    };
+      const dbStub: NoteDatabasePool = {
+        execute: poolExecuteStub,
+        getConnection: sinon.stub().resolves(connectionStub),
+      };
 
-    const repo = new NoteRepository(dbStub);
+      const repo = new NoteRepository(dbStub);
 
-    const result = await repo.bulkInsertNotes('user-1', [
-      {
-        id: 'n1',
-        title: 'Imported note',
-        content: '<p>Body</p>',
-        tag: 'Personal',
-        color: '#FFFFFF',
-      },
-    ]);
+      const result = await repo.bulkInsertNotes('user-1', [
+        {
+          id: 'n1',
+          title: 'Imported note',
+          content: '<p>Body</p>',
+          tag: 'Personal',
+          color: '#FFFFFF',
+        },
+      ]);
 
-    expect(result).to.deep.equal(fetchedRows);
-    expect(poolExecuteStub.called).to.be.false;
-    expect(connExecuteStub.calledTwice).to.be.true;
+      expect(result).to.deep.equal(fetchedRows);
+      expect(poolExecuteStub.called).to.be.false;
+      expect(connExecuteStub.calledTwice).to.be.true;
 
-    // second execute call must happen before commit
-    expect(connExecuteStub.secondCall.calledBefore(commitStub.firstCall)).to.be.true;
+      // The SELECT must happen before the transaction is committed.
+      expect(
+        connExecuteStub.secondCall.calledBefore(commitStub.firstCall),
+      ).to.be.true;
 
-    expect(commitStub.calledOnce).to.be.true;
-    expect(releaseStub.calledOnce).to.be.true;
+      expect(commitStub.calledOnce).to.be.true;
+      expect(releaseStub.calledOnce).to.be.true;
+    } catch (err) {
+      throw err;
+    }
   });
 
   it('rolls back transaction if reading imported notes fails before commit', async () => {
