@@ -53,6 +53,26 @@ describe('AuthService', () => {
     expect(userRepoStub.createUser.calledOnce).to.be.true;
   });
 
+  it('throws 400 VALIDATION_ERROR when fullName becomes empty or too short after sanitization', async () => {
+    try {
+      await authService.register({
+        fullName: '<b></b>',
+        email: 'alex@example.com',
+        password: 'Password123!',
+      });
+      expect.fail('Expected register to throw validation error');
+    } catch (err) {
+      const appErr = err as AppError;
+      expect(appErr.statusCode).to.equal(400);
+      expect(appErr.code).to.equal('VALIDATION_ERROR');
+      expect(appErr.details).to.deep.equal([
+        { field: 'fullName', message: 'Full name must be at least 2 characters' },
+      ]);
+      expect(userRepoStub.findByEmail.called).to.be.false;
+      expect(userRepoStub.createUser.called).to.be.false;
+    }
+  });
+
   it('throws 409 EMAIL_EXISTS if email is already registered', async () => {
     userRepoStub.findByEmail.resolves({
       id: 'existing-id',

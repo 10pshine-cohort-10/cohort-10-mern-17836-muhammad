@@ -7,7 +7,8 @@ import {
   NoteRow,
 } from '../types/models';
 
-export type NoteDatabasePool = Pick<Pool, 'execute'> & Partial<Pick<Pool, 'getConnection'>>;
+export type NoteQueryExecutor = Pick<Pool, 'execute'>;
+export type NoteDatabasePool = NoteQueryExecutor & Partial<Pick<Pool, 'getConnection'>>;
 
 export default class NoteRepository {
   private readonly db: NoteDatabasePool;
@@ -18,10 +19,11 @@ export default class NoteRepository {
 
   async findAllByUser(
     userId: string,
-    { search = '', tag = '', dateFrom = '', dateTo = '' }: NoteFilters = {}
+    { search = '', tag = '', dateFrom = '', dateTo = '' }: NoteFilters = {},
+    executor: NoteQueryExecutor = this.db
   ): Promise<NoteRow[]> {
     const conditions: string[] = ['user_id = ?'];
-    const params: any[] = [userId];
+    const params: string[] = [userId];
 
     if (tag && tag !== 'All') {
       conditions.push('tag = ?');
@@ -51,7 +53,7 @@ export default class NoteRepository {
       ORDER BY updated_at DESC
     `;
 
-    const [rows] = await this.db.execute<NoteRow[]>(sql, params);
+    const [rows] = await executor.execute<NoteRow[]>(sql, params);
     return rows;
   }
 
@@ -62,19 +64,15 @@ export default class NoteRepository {
       WHERE id = ? AND user_id = ?
       LIMIT 1
     `;
-
     const [rows] = await this.db.execute<NoteRow[]>(sql, [noteId, userId]);
     return rows[0] || null;
   }
 
-  async createNote(
-    { id, userId, title, content, tag, color }: CreateNoteRecord
-  ): Promise<NoteRow | null> {
+  async createNote({ id, userId, title, content, tag, color }: CreateNoteRecord): Promise<NoteRow | null> {
     const sql = `
       INSERT INTO notes (id, user_id, title, content, tag, color)
       VALUES (?, ?, ?, ?, ?, ?)
     `;
-
     await this.db.execute(sql, [id, userId, title, content, tag, color]);
     return this.findByIdAndUser(id, userId);
   }
@@ -90,17 +88,14 @@ export default class NoteRepository {
       'tag',
       'color',
     ];
-
     const setClauses: string[] = [];
-    const params: any[] = [];
+    const params: string[] = [];
 
     for (const column of allowedColumns) {
-      if (
-        Object.prototype.hasOwnProperty.call(updates, column) &&
-        updates[column] !== undefined
-      ) {
+      const value = updates[column];
+      if (Object.prototype.hasOwnProperty.call(updates, column) && value !== undefined) {
         setClauses.push(`${column} = ?`);
-        params.push(updates[column]);
+        params.push(value);
       }
     }
 
@@ -113,15 +108,12 @@ export default class NoteRepository {
       SET ${setClauses.join(', ')}
       WHERE id = ? AND user_id = ?
     `;
-
     params.push(noteId, userId);
 
     const [result] = await this.db.execute<ResultSetHeader>(sql, params);
-
     if (result.affectedRows === 0) {
       return null;
     }
-
     return this.findByIdAndUser(noteId, userId);
   }
 
@@ -130,7 +122,6 @@ export default class NoteRepository {
       DELETE FROM notes
       WHERE id = ? AND user_id = ?
     `;
-
     const [result] = await this.db.execute<ResultSetHeader>(sql, [noteId, userId]);
     return result.affectedRows > 0;
   }
@@ -142,21 +133,16 @@ export default class NoteRepository {
     if (!Array.isArray(notesList) || notesList.length === 0) {
       return [];
     }
-
     if (!this.db.getConnection) {
       throw new Error('Database pool does not support transactional connections');
     }
-
     const connection = await this.db.getConnection();
-
     try {
       await connection.beginTransaction();
-
       const insertSql = `
         INSERT INTO notes (id, user_id, title, content, tag, color)
         VALUES (?, ?, ?, ?, ?, ?)
       `;
-
       for (const note of notesList) {
         await connection.execute(insertSql, [
           note.id,
@@ -167,9 +153,9 @@ export default class NoteRepository {
           note.color,
         ]);
       }
-
+      const rows = await this.findAllByUser(userId, {}, connection);
       await connection.commit();
-      return this.findAllByUser(userId);
+      return rows;
     } catch (error) {
       await connection.rollback();
       throw error;

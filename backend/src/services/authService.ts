@@ -16,6 +16,7 @@ import {
 } from '../types/models';
 
 const BCRYPT_SALT_ROUNDS = 12;
+export const MIN_FULL_NAME_LENGTH = 2;
 
 export interface UserRepositoryContract {
   findByEmail(email: string): Promise<UserRow | null>;
@@ -53,7 +54,16 @@ export default class AuthService {
 
   async register({ fullName, email, password }: RegisterInput): Promise<AuthResult> {
     const normalizedEmail = email.trim().toLowerCase();
-    const cleanedName = sanitizePlainText(fullName);
+    const cleanedName = sanitizePlainText(fullName).trim();
+
+    if (cleanedName.length < MIN_FULL_NAME_LENGTH) {
+      throw new AppError('Validation failed', 400, 'VALIDATION_ERROR', [
+        {
+          field: 'fullName',
+          message: `Full name must be at least ${MIN_FULL_NAME_LENGTH} characters`,
+        },
+      ]);
+    }
 
     const existingUser = await this.userRepository.findByEmail(normalizedEmail);
     if (existingUser) {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, Plus, FileText } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
@@ -64,21 +64,46 @@ export default function DashboardPage(): React.ReactElement {
   const [showProfile, setShowProfile] = useState<boolean>(false);
   const [showImport, setShowImport] = useState<boolean>(false);
 
+  const latestRequestIdRef = useRef<number>(0);
+  const isMountedRef = useRef<boolean>(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      latestRequestIdRef.current += 1;
+    };
+  }, []);
+
   const loadNotes = useCallback(async (): Promise<void> => {
+    const requestId = ++latestRequestIdRef.current;
+    setLoading(true);
+    setError('');
+
     try {
-      setError('');
       const data = await fetchNotes({
         search: searchQuery,
         tag: selectedTag,
         dateFrom: dateFilter,
       });
+
+      if (!isMountedRef.current || requestId !== latestRequestIdRef.current) {
+        return;
+      }
+
       const fetched = data.notes || [];
       setNotes(activeNav === 'recent' ? fetched.slice(0, RECENT_NOTES_LIMIT) : fetched);
     } catch (err) {
+      if (!isMountedRef.current || requestId !== latestRequestIdRef.current) {
+        return;
+      }
+
       const message = err instanceof Error ? err.message : 'Unable to load notes.';
       setError(message);
     } finally {
-      setLoading(false);
+      if (isMountedRef.current && requestId === latestRequestIdRef.current) {
+        setLoading(false);
+      }
     }
   }, [searchQuery, selectedTag, dateFilter, activeNav]);
 
@@ -145,11 +170,13 @@ export default function DashboardPage(): React.ReactElement {
   const handleDeleteNote = async (noteId: string): Promise<void> => {
     try {
       await deleteNote(noteId);
+      if (!isMountedRef.current) return;
       setNotes((prev) => prev.filter((n) => n.id !== noteId));
       if (activeNav === 'recent') {
         void loadNotes();
       }
     } catch (err) {
+      if (!isMountedRef.current) return;
       const message = err instanceof Error ? err.message : 'Failed to delete note.';
       setError(message);
     }
@@ -157,6 +184,7 @@ export default function DashboardPage(): React.ReactElement {
 
   const handleImportNotes = async (parsedNotes: NotePayload[]): Promise<void> => {
     await importNotesBulk(parsedNotes);
+    if (!isMountedRef.current) return;
     await loadNotes();
   };
 

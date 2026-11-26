@@ -5,5 +5,6 @@
     "noEmit": true,
     "types": ["node", "mocha"]
   },
-  "include": ["src/**/*", "tests/**/*"]
+  "include": ["src/**/*", "tests/**/*"],
+  "exclude": ["node_modules", "dist", "coverage"]
 }
